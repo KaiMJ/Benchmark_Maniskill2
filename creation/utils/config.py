@@ -29,7 +29,6 @@ Data structure format
 """
 
 
-
 """
 Color map for different cubes / spheres.
 """

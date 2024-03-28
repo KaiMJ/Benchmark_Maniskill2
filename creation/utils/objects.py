@@ -9,7 +9,10 @@ import numpy as np
 from transforms3d.euler import euler2quat, quat2euler
 from utils.config import ycb_heights, color_maps
 from glob import glob
-
+from scipy import sparse
+from PIL import Image
+import json
+import os
 
 class GenerationClass:
     def __init__(self, model_paths=None):
@@ -19,6 +22,7 @@ class GenerationClass:
         self.low = -0.5
         self.high = 0.5
         self.hoirzontally = False
+        self.init = False
 
         if model_paths is None:
             model_paths = sorted(glob(
@@ -35,8 +39,8 @@ class GenerationClass:
         self.register_objects(self.camera_cfgs)
         self.env = gym.make("CustomEnv-v0", obs_mode="rgbd",
                             camera_cfgs={"add_segmentation": True})
-        self.env.get_articulations()[0].set_pose(Pose([3, 3, 4], [1, 0, 0, 0]))
         self.env.reset()
+        self.env.unwrapped.get_articulations()[0].set_pose(Pose([0, 0, -2], [1, 0, 0, 0]))
         return self.env
 
     def register_objects(self, camera_cfgs):
@@ -50,10 +54,10 @@ class GenerationClass:
 
         def build_asset(self, config):
             scale = config["scale"]
-            if config["name"] == "cube":
+            if config["name"].split('_')[-1] == "cube":
                 obj = self._build_cube(
                     self.cube_half_size*scale, color=config["color"], static=config["static"])
-
+                obj.name = config["name"]
             else:
                 scale *= self.cube_half_size / 0.01887479572529618
                 filepath = config["name"]
@@ -131,7 +135,7 @@ class GenerationClass:
 
             quat = euler2quat(0, 0, np.random.uniform(-np.pi*2, np.pi*2))
             name = self.configs[move_idx]["name"]
-            if name == "cube":
+            if name.split('_')[-1] == "cube":
                 new_pose = Pose(
                     [position[0], position[1], self.env.unwrapped.cube_half_size[-1]*scale], quat)
             else:
@@ -270,15 +274,19 @@ class GenerationClass:
         else:
             random_scales = np.random.permutation(np.arange(3, 7))
 
-        obj_configs= [{
-            "name": "cube", 
-            "scale": random_scales[i],
-            "color": color_maps[colors[i]],
-            "color_name": colors[i],
-            "static": static,
-        } for i in range(n)]
+        obj_configs = []
+        for i in range(n):
+            color = colors[i]
+            color_value = color_maps[color]
+            obj_configs.append({
+                "name": f"{color}_cube",
+                "scale": random_scales[i],
+                "color": color_value,
+                "color_name": color,
+                "static": static,
+            })
 
-        camera_cfgs = {"p": [-1, 0, 1], "fov": 1.4}
+        camera_cfgs = {"p": [-1, 0, 1], "fov": 1.3}
 
         return obj_configs, camera_cfgs
 
@@ -294,5 +302,48 @@ class GenerationClass:
         # if n == 1:
         camera_cfgs = {"p": [-1, 0, 1], "fov": 1.2}
 
-        return configs, camera_cfgs
+        return configs, camera_cfgs  
 
+
+    # ================== Save JSON ==================
+    def init_dir(self, data_dir):
+        if not self.init:
+            for name in ["initial", "result", "initial_seg", "result_seg"]:
+                os.makedirs(os.path.join(data_dir, name), exist_ok=True)
+                self.init = True
+                self.data_dir = data_dir
+
+    def save_json(self, json_data, initial_img, result_img, seg_before, seg_after):
+        data_dir = self.data_dir
+
+        Image.fromarray(initial_img).save(os.path.join(data_dir, f"{json_data['initial_img']}"))
+        Image.fromarray(result_img).save(os.path.join(data_dir, f"{json_data['result_img']}"))
+        sparse.save_npz(os.path.join(data_dir, f"{json_data['initial_seg']}"), sparse.csr_matrix(seg_before))
+        sparse.save_npz(os.path.join(data_dir, f"{json_data['result_seg']}"), sparse.csr_matrix(seg_after))
+
+        # save json
+        json_path = os.path.join(data_dir, f"data.json")
+        try:
+            current_data = json.load(open(json_path, "r"))
+        except:
+            current_data = []
+        with open(json_path, "w") as f:
+            json.dump(current_data + [json_data], f)
+
+    # ================== Get Segmentation Masks ==================
+
+    def get_seg_masks(self, obs):
+        seg = obs['image']['base_camera']['Segmentation'][..., :3]
+        object_ids = np.array([obj.id - 2 for obj in self.env.unwrapped.objs])
+        object_names = np.array([obj.name for obj in self.env.unwrapped.objs])
+
+        mask = np.isin(seg, object_ids)
+
+        seg_masked = np.where(mask, seg, 0)
+
+        starting_id = min(object_ids) - 1
+        object_ids_adjusted = (object_ids - starting_id).astype(str)
+
+        seg_masked = np.where(seg_masked > 0, seg_masked - starting_id, 0)
+        # seg_masked = np.amax(seg_masked, axis=2)
+        return seg_masked[:, :, 0], list(zip(object_names, object_ids_adjusted))

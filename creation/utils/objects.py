@@ -197,7 +197,7 @@ class GenerationClass:
         obj_to_move.set_pose(new_position)
 
     def remove_object(self, obj_to_move):
-        obj_to_move.set_pose(Pose([0, 0, 10], [1, 0, 0, 0]))
+        obj_to_move.set_pose(Pose([0, 0, -2], [1, 0, 0, 0]))
 
 
     # ================== Order by color / size / name ==================

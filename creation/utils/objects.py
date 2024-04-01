@@ -14,6 +14,7 @@ from PIL import Image
 import json
 import os
 
+
 class GenerationClass:
     def __init__(self, model_paths=None):
         self.env = None
@@ -40,7 +41,8 @@ class GenerationClass:
         self.env = gym.make("CustomEnv-v0", obs_mode="rgbd",
                             camera_cfgs={"add_segmentation": True})
         self.env.reset()
-        self.env.unwrapped.get_articulations()[0].set_pose(Pose([0, 0, -2], [1, 0, 0, 0]))
+        self.env.unwrapped.get_articulations()[0].set_pose(
+            Pose([0, 0, -2], [1, 0, 0, 0]))
         return self.env
 
     def register_objects(self, camera_cfgs):
@@ -81,6 +83,7 @@ class GenerationClass:
             return obj
 
         configs = self.configs
+
         @register_env("CustomEnv-v0", max_episode_steps=200, override=True)
         class CustomEnv(PickCubeEnv):
             def _load_actors(self):
@@ -103,48 +106,47 @@ class GenerationClass:
 
     # ================== Initializing object positions ==================
 
-    def is_overlapping(self, pos1, pos2, min_dist):
-        # Calculate the Euclidean distance between two positions
-        dist = np.sqrt((pos1[0] - pos2[0])**2 + (pos1[1] - pos2[1])**2)
-        return dist < min_dist
+    def generate_random_angles(self, n, min_separation=np.pi/3):
+        angles = []
 
-    def generate_non_overlapping_position(self, existing_positions, min_dist, low=-0.5, high=0.5):
-        while True:
-            # Generate a random position
-            new_position = np.random.uniform(low=low, high=high, size=(2))
-            # Check for overlap with existing positions
-            overlap = any(self.is_overlapping(new_position, pos, min_dist)
-                          for pos in existing_positions)
-            if not overlap:
-                return new_position
+        for _ in range(n):
+            attempt = 0
+            while True:
+                new_angle = np.random.uniform(0, 2*np.pi)
 
-    def initialize_random_positions(self, low=-0.5, high=0.5, min_dist=0.5, hoirzontally=False):
-        existing_positions = []
-        if hoirzontally:
-            positions = np.linspace(low, high, len(self.configs))
+                is_far_enough = all(min(abs(new_angle - angle), 2*np.pi -
+                                    abs(new_angle - angle)) >= min_separation for angle in angles)
 
-        for move_idx in range(len(self.configs)):
-            scale = self.configs[move_idx]["scale"]
-            if hoirzontally:
-                position = positions[move_idx]
-                position = np.array([position, 0])
-            else:
-                position = self.generate_non_overlapping_position(
-                    existing_positions, min_dist, low, high)
-                existing_positions.append(position)
+                if is_far_enough:
+                    angles.append(new_angle)
+                    break
 
-            quat = euler2quat(0, 0, np.random.uniform(-np.pi*2, np.pi*2))
-            name = self.configs[move_idx]["name"]
-            if name.split('_')[-1] == "cube":
-                new_pose = Pose(
-                    [position[0], position[1], self.env.unwrapped.cube_half_size[-1]*scale], quat)
-            else:
-                model_name = name.split('/')[-1]
-                scale = self.configs[move_idx]["scale"]
-                new_pose = Pose([position[0], position[1],
-                                ycb_heights[model_name]*scale*1.02], quat)
+                attempt += 1
+                if attempt > 1000:
+                    raise (ValueError(
+                        "Could not find a new angle with enough separation after 1000 attempts."))
+        return angles
 
-            self.env.unwrapped.objs[move_idx].set_pose(new_pose)
+    def initialize_positions(self, n, obj_cfgs, radius=0.5, mean_noise=0, std_dev_noise=0.1):
+        positions = []
+        random_angles = self.generate_random_angles(n)
+        for i in range(n):
+            angle = random_angles[i]
+
+            x = radius * np.cos(angle)
+            y = radius * np.sin(angle)
+
+            x += np.random.normal(loc=mean_noise, scale=std_dev_noise)
+            y += np.random.normal(loc=mean_noise, scale=std_dev_noise)
+
+            positions.append([x, y, obj_cfgs[i]["scale"] *
+                             self.env.cube_half_size[0] * 2])
+
+        for i, obj in enumerate(self.env.unwrapped.objs):
+            obj.set_pose(Pose(positions[i], euler2quat(
+                0, 0, np.random.uniform(-np.pi*2, np.pi*2))))
+
+        return positions
 
     # ================== Placing objects in position ==================
 
@@ -198,7 +200,6 @@ class GenerationClass:
 
     def remove_object(self, obj_to_move):
         obj_to_move.set_pose(Pose([0, 0, -2], [1, 0, 0, 0]))
-
 
     # ================== Order by color / size / name ==================
 
@@ -302,24 +303,26 @@ class GenerationClass:
         # if n == 1:
         camera_cfgs = {"p": [-1, 0, 1], "fov": 1.2}
 
-        return configs, camera_cfgs  
-
+        return configs, camera_cfgs
 
     # ================== Save JSON ==================
+
     def init_dir(self, data_dir):
-        if not self.init:
-            for name in ["initial", "result", "initial_seg", "result_seg"]:
-                os.makedirs(os.path.join(data_dir, name), exist_ok=True)
-                self.init = True
-                self.data_dir = data_dir
+        for name in ["initial", "result", "initial_seg", "result_seg"]:
+            os.makedirs(os.path.join(data_dir, name), exist_ok=True)
+            self.data_dir = data_dir
 
     def save_json(self, json_data, initial_img, result_img, seg_before, seg_after):
         data_dir = self.data_dir
 
-        Image.fromarray(initial_img).save(os.path.join(data_dir, f"{json_data['initial_img']}"))
-        Image.fromarray(result_img).save(os.path.join(data_dir, f"{json_data['result_img']}"))
-        sparse.save_npz(os.path.join(data_dir, f"{json_data['initial_seg']}"), sparse.csr_matrix(seg_before))
-        sparse.save_npz(os.path.join(data_dir, f"{json_data['result_seg']}"), sparse.csr_matrix(seg_after))
+        Image.fromarray(initial_img).save(os.path.join(
+            data_dir, f"{json_data['initial_img']}"))
+        Image.fromarray(result_img).save(os.path.join(
+            data_dir, f"{json_data['result_img']}"))
+        sparse.save_npz(os.path.join(
+            data_dir, f"{json_data['initial_seg']}"), sparse.csr_matrix(seg_before))
+        sparse.save_npz(os.path.join(
+            data_dir, f"{json_data['result_seg']}"), sparse.csr_matrix(seg_after))
 
         # save json
         json_path = os.path.join(data_dir, f"data.json")

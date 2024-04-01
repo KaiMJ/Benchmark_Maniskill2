@@ -110,7 +110,15 @@ class GenerationClass:
 
     # ================== Initializing object positions ==================
 
-    def generate_random_angles(self, n, min_separation=np.pi/3):
+    def generate_random_angles(self, n):
+        if n == 4:
+            min_separation = np.pi/3
+        elif n == 3:
+            min_separation = np.pi/2
+        elif n == 2:
+            min_separation = np.pi/2
+        else:
+            min_separation = np.pi/3
         angles = []
 
         for _ in range(n):
@@ -189,7 +197,7 @@ class GenerationClass:
                                  pose_obj2.p[1] + distance, pose_obj2.p[2]]
         elif direction == "top":
             new_position_obj1 = [
-                pose_obj2.p[0], pose_obj2.p[1], pose_obj2.p[2]*2 + pose_obj1.p[2]]
+                pose_obj2.p[0], pose_obj2.p[1], pose_obj2.p[2]*2]
 
         obj1.set_pose(Pose(new_position_obj1, obj1.get_pose().q))
 
@@ -271,13 +279,32 @@ class GenerationClass:
 
     # ================== Configurations ==================
 
-    def cube_configs(self, n, colors=None, scales=None, static=True):
-        colors = np.random.choice(list(color_maps.keys()), 4, replace=False)
+    def cube_configs(self, n, colors=None, scales=None, static=True, add_color=None):
+        """
+        Get cube configs for generating environment
+        args:
+            n: number of cubes
+            colors: list of colors to choose from
+            scales: [low, high]
+            static: whether the object is static
+            add_color: add a specific color to the list
+        """
+        if colors is None:
+            colors = np.random.choice(
+                list(color_maps.keys()), n, replace=False)
+
+        if add_color is not None:
+            if n == 1:
+                colors = [add_color]
+            else:
+                new_colors = np.random.choice(
+                    [c for c in colors if c != add_color], size=n-1, replace=False)
+                colors = np.concatenate([[add_color], new_colors])
 
         if scales is not None:
             random_scales = scales
         else:
-            random_scales = np.random.permutation(np.arange(3, 7))
+            random_scales = [3, 7]
 
         obj_configs = []
         for i in range(n):
@@ -285,7 +312,7 @@ class GenerationClass:
             color_value = color_maps[color]
             obj_configs.append({
                 "name": f"{color}_cube",
-                "scale": random_scales[i],
+                "scale": np.random.uniform(random_scales[0], random_scales[1]),
                 "color": color_value,
                 "color_name": color,
                 "static": static,
@@ -304,7 +331,6 @@ class GenerationClass:
             }
             for i in np.random.choice(np.arange(len(self.model_paths)), n, replace=False).astype(int)
         ]
-        # if n == 1:
         camera_cfgs = {"p": [-1, 0, 1], "fov": 1.2}
 
         return configs, camera_cfgs
@@ -355,12 +381,13 @@ class GenerationClass:
         # seg_masked = np.amax(seg_masked, axis=2)
         return seg_masked[:, :, 0], list(zip(object_names, object_ids_adjusted))
 
+    # ================== Generate and Save Samples ==================
 
-    # ================== Generate Samples ==================
     def generate_samples(self, N, obj_cfgs, idx, total_idx, type):
         self.initialize_positions(N, obj_cfgs)
 
-        obs, _, _, _, _ = self.env.step(np.zeros(len(self.env.action_space.sample())))
+        obs, _, _, _, _ = self.env.step(
+            np.zeros(len(self.env.action_space.sample())))
         initial_img = obs['image']['base_camera']['rgb']
         seg_before, object_ids = self.get_seg_masks(obs)
 
@@ -382,141 +409,90 @@ class GenerationClass:
             json_data["target_object"] = obj.name
 
         elif type == "place_object_in_between":
-            directions = self.two_objs_directions
-            direction = np.random.choice(directions)
-            rand_objs = np.random.choice(self.env.unwrapped.objs, 3, replace=False)
+            direction = "between"
+            rand_objs = np.random.choice(
+                self.env.unwrapped.objs, 3, replace=False)
             obj1, obj2, obj3 = rand_objs
 
             self.place_object_in_between(obj1, obj2, obj3)
             json_data["between_objects"] = [obj2.name, obj3.name]
             json_data["target_object"] = obj1.name
 
+        elif type == "place_object_on_another":
+            directions = self.two_objs_directions
+            rand_objs = np.random.choice(
+                self.env.unwrapped.objs, 2, replace=False)
+            obj1, obj2 = rand_objs
+            direction = directions[idx % len(directions)]
+            self.place_object_on_another(obj1, obj2, direction)
+            json_data["target_object"] = obj1.name
+
         json_data["direction"] = direction
 
-        obs, _, _, _, _ = self.env.step(np.zeros(len(self.env.action_space.sample())))
+        obs, _, _, _, _ = self.env.step(
+            np.zeros(len(self.env.action_space.sample())))
         result_img = obs['image']['base_camera']['rgb']
         seg_after, object_ids = self.get_seg_masks(obs)
 
+        self.save_json(json_data, initial_img,
+                       result_img, seg_before, seg_after)
 
-        self.save_json(json_data, initial_img, result_img, seg_before, seg_after)
+    # ================== Run Samples ==================
 
+    def generate_single_direction_cubes(self, N, random_trials=10):
+        self.init_dir(f"../final_data/{N}_cube_single_direction")
 
-
-
-    # ================== Generate Samples ==================
-    def get_one_cube_single_direction(self, random_trials = 20):
-        # move one object 9 * 20 images
-        self.init_dir("../final_data/one_cube_single_direction")
-
-        N = 1
-        obj_cfgs, camera_cfgs = self.cube_configs(N)
-
-        colors = list(color_maps.keys()) # 9 colors
-        random_scales = np.arange(3, 5) * 2
+        if N == 1:
+            random_scales = [6, 10]
+        else:
+            random_scales = [6, 8]
 
         total_idx = 0
 
-        for color in colors:
+        for color in color_maps.keys():
             for idx in range(random_trials):
-                obj_cfgs = [{
-                    "name": f"{color}_cube",
-                    "scale": np.random.choice(random_scales),
-                    "color": color_maps[color],
-                    "color_name": color,
-                    "static": True,
-                }]
-
+                obj_cfgs, camera_cfgs = self.cube_configs(
+                    N, scales=random_scales, add_color=color)
                 env = self.get_env(obj_cfgs, camera_cfgs)
 
-                self.generate_samples(N, obj_cfgs, idx, total_idx, type="place_object_in_direction")
+                self.generate_samples(
+                    N, obj_cfgs, idx, total_idx, type="place_object_in_direction")
                 total_idx += 1
                 clear_output(wait=True)
                 print("Done", total_idx, end="\r")
 
-    
-    def get_four_cubes_single_direction(self, random_trials=20):
-        self.init_dir("../final_data/four_cubes_single_direction")
+    def generate_in_between_cubes(self, N, random_trials=10):
+        self.init_dir(f"../final_data/{N}_cubes_in_between")
 
-        N = 4
-
-        # Initialize positions with random angles and Gaussian noise
-        obj_cfgs, camera_cfgs = self.cube_configs(N)
-
-        colors = list(color_maps.keys()) # 9 colors
-        random_scales = np.arange(3, 4) * 2
-
+        random_scales = [6, 8]
         total_idx = 0
 
-        for color in colors:
+        for color in color_maps.keys():
             for idx in range(random_trials):
-                obj_cfgs = []
-                obj_cfgs.append({
-                    "name": f"{color}_cube",
-                    "scale": np.random.choice(random_scales),
-                    "color": color_maps[color],
-                    "color_name": color,
-                    "static": True,
-                })
-
-                not_in_colors = [c for c in colors if c != color]
-                random_colors = np.random.choice(not_in_colors, 3, replace=False)
-
-                for i in range(3):
-                    color = random_colors[i]
-                    obj_cfgs.append({
-                        "name": f"{color}_cube",
-                        "scale": np.random.choice(random_scales),
-                        "color": color_maps[color],
-                        "color_name": color,
-                        "static": True,
-                })
-
+                obj_cfgs, camera_cfgs = self.cube_configs(
+                    N, scales=random_scales, add_color=color)
                 env = self.get_env(obj_cfgs, camera_cfgs)
-                self.generate_samples(N, obj_cfgs, idx, total_idx, type="place_object_in_direction")
+
+                self.generate_samples(
+                    N, obj_cfgs, idx, total_idx, type="place_object_in_between")
                 total_idx += 1
                 clear_output(wait=True)
                 print("Done", total_idx, end="\r")
 
-    def get_four_cubes_in_between(self, random_trials=20):
-        self.init_dir("../final_data/four_cubes_in_between")
+    def generate_on_another(self, N, random_trials=10):
+        self.init_dir(f"../final_data/{N}_cubes_on_another")
 
-        N = 4
-
-        # Initialize positions with random angles and Gaussian noise
-        obj_cfgs, camera_cfgs = self.cube_configs(N)
-
-        colors = list(color_maps.keys()) # 9 colors
-        random_scales = np.arange(3, 4) * 2
-
+        random_scales = [6, 8]
         total_idx = 0
 
-        for color in colors:
+        for color in color_maps.keys():
             for idx in range(random_trials):
-                obj_cfgs = []
-                obj_cfgs.append({
-                    "name": f"{color}_cube",
-                    "scale": np.random.choice(random_scales),
-                    "color": color_maps[color],
-                    "color_name": color,
-                    "static": True,
-                })
-
-                # pick 3 not in color
-                not_in_colors = [c for c in colors if c != color]
-                random_colors = np.random.choice(not_in_colors, 3, replace=False)
-
-                for i in range(3):
-                    color = random_colors[i]
-                    obj_cfgs.append({
-                        "name": f"{color}_cube",
-                        "scale": np.random.choice(random_scales),
-                        "color": color_maps[color],
-                        "color_name": color,
-                        "static": True,
-                })
-
+                obj_cfgs, camera_cfgs = self.cube_configs(
+                    N, scales=random_scales, add_color=color)
                 env = self.get_env(obj_cfgs, camera_cfgs)
-                self.generate_samples(N, obj_cfgs, idx, total_idx, type="place_object_in_between")
+
+                self.generate_samples(
+                    N, obj_cfgs, idx, total_idx, type="place_object_on_another")
                 total_idx += 1
                 clear_output(wait=True)
                 print("Done", total_idx, end="\r")

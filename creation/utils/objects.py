@@ -216,17 +216,22 @@ class GenerationClass:
     # ================== Order by color / size / name ==================
 
     def order_by_color(self, order_list, colors):
+        """
+        order_list: list of colors in the order you want them to be
+        colors: list of colors in the environment
+        """
         objs = self.env.unwrapped.objs
-        y_position = np.linspace(-0.5, 0.5, len(order_list))
-        for i in range(len(order_list)):
-            idx = order_list.index(colors[i])
+        y_position = np.linspace(0.5, -0.5, len(order_list))
+
+        for i in range(len(colors)):
+            idx = colors.index(order_list[i])
             obj_pose = objs[idx].get_pose()
             objs[idx].set_pose(
-                Pose([0, y_position[idx], obj_pose.p[2]], obj_pose.q))
+                Pose([-self.env.cube_half_size[0], y_position[i], obj_pose.p[2]], obj_pose.q))
 
     def order_by_size(self, ascending=False):
         objs = self.env.unwrapped.objs
-        y_position = np.linspace(-0.5, 0.5, len(self.configs))
+        y_position = np.linspace(0.5, -0.5, len(self.configs))
 
         sorted_size = list(np.argsort(
             [self.configs[i]["scale"] for i in range(len(objs))]))
@@ -236,7 +241,7 @@ class GenerationClass:
             idx = sorted_size.index(i)
             obj_pose = objs[i].get_pose()
             objs[i].set_pose(
-                Pose([0, y_position[idx], obj_pose.p[2]], obj_pose.q))
+                Pose([-self.env.cube_half_size[0], y_position[i], obj_pose.p[2]], obj_pose.q))
 
     def order_by_name(self, name_list, configs):
         objs = self.env.unwrapped.objs
@@ -309,11 +314,10 @@ class GenerationClass:
         obj_configs = []
         for i in range(n):
             color = colors[i]
-            color_value = color_maps[color]
             obj_configs.append({
                 "name": f"{color}_cube",
                 "scale": np.random.uniform(random_scales[0], random_scales[1]),
-                "color": color_value,
+                "color": color_maps[color],
                 "color_name": color,
                 "static": static,
             })
@@ -359,6 +363,8 @@ class GenerationClass:
         try:
             current_data = json.load(open(json_path, "r"))
         except:
+            # remove the file if it is empty
+            os.remove(json_path)
             current_data = []
         with open(json_path, "w") as f:
             json.dump(current_data + [json_data], f)
@@ -427,7 +433,21 @@ class GenerationClass:
             self.place_object_on_another(obj1, obj2, direction)
             json_data["target_object"] = obj1.name
 
-        json_data["direction"] = direction
+        elif type == "remove_object":
+            rand_idx = np.random.choice(len(self.env.objs))
+            obj = self.env.objs[rand_idx]
+            self.remove_object(obj)
+            json_data["target_object"] = obj.name
+
+        elif type == "order_by_color":
+            colors = [obj_cfg["color_name"] for obj_cfg in obj_cfgs]
+            order_list = np.random.permutation(colors).tolist()
+            self.order_by_color(order_list, colors)
+            json_data["color_order"] = order_list
+
+
+        if type not in ["remove_object", "order_by_color"]:
+            json_data["direction"] = direction
 
         obs, _, _, _, _ = self.env.step(
             np.zeros(len(self.env.action_space.sample())))
@@ -439,8 +459,18 @@ class GenerationClass:
 
     # ================== Run Samples ==================
 
-    def generate_single_direction_cubes(self, N, random_trials=10):
-        self.init_dir(f"../final_data/{N}_cube_single_direction")
+    def generate(self, N, type, random_trials=1):
+        """
+        type: [
+            "place_object_in_direction",
+            "place_object_on_another",
+            "place_object_in_between",
+            "remove_object",
+            "order_by_color",
+        ]
+        """
+        self.init_dir(f"../final_data/{N}_{type}")
+
 
         if N == 1:
             random_scales = [6, 10]
@@ -456,43 +486,7 @@ class GenerationClass:
                 env = self.get_env(obj_cfgs, camera_cfgs)
 
                 self.generate_samples(
-                    N, obj_cfgs, idx, total_idx, type="place_object_in_direction")
-                total_idx += 1
-                clear_output(wait=True)
-                print("Done", total_idx, end="\r")
-
-    def generate_in_between_cubes(self, N, random_trials=10):
-        self.init_dir(f"../final_data/{N}_cubes_in_between")
-
-        random_scales = [6, 8]
-        total_idx = 0
-
-        for color in color_maps.keys():
-            for idx in range(random_trials):
-                obj_cfgs, camera_cfgs = self.cube_configs(
-                    N, scales=random_scales, add_color=color)
-                env = self.get_env(obj_cfgs, camera_cfgs)
-
-                self.generate_samples(
-                    N, obj_cfgs, idx, total_idx, type="place_object_in_between")
-                total_idx += 1
-                clear_output(wait=True)
-                print("Done", total_idx, end="\r")
-
-    def generate_on_another(self, N, random_trials=10):
-        self.init_dir(f"../final_data/{N}_cubes_on_another")
-
-        random_scales = [6, 8]
-        total_idx = 0
-
-        for color in color_maps.keys():
-            for idx in range(random_trials):
-                obj_cfgs, camera_cfgs = self.cube_configs(
-                    N, scales=random_scales, add_color=color)
-                env = self.get_env(obj_cfgs, camera_cfgs)
-
-                self.generate_samples(
-                    N, obj_cfgs, idx, total_idx, type="place_object_on_another")
+                    N, obj_cfgs, idx, total_idx, type=type)
                 total_idx += 1
                 clear_output(wait=True)
                 print("Done", total_idx, end="\r")

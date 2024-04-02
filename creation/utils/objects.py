@@ -269,8 +269,8 @@ class GenerationClass:
         result = np.concatenate([final_vector, [0]])
         return result
 
-    def move_object(self, obj, direction, motion_map, force_scale=1):
-        force_scale *= obj.mass * 4
+    def move_object(self, obj, direction, motion_map, force_scale=10):
+        force_scale *= obj.mass
         obj.add_force_at_point(
             motion_map[direction]*force_scale, np.array([0, 0, 0]))
 
@@ -283,7 +283,9 @@ class GenerationClass:
         direction = np.concatenate([direction, [0]])
         return -direction
 
-    def move_object_toward_another(self, obj_to_move, direction, force_scale=1):
+    def move_object_toward_another(self, obj_to_move, obj_target, force_scale=1):
+        direction = self.get_object_to_object_direction(
+            obj_to_move, obj_target)
         force_scale *= 250 * obj_to_move.mass * 4
         obj_to_move.add_force_at_point(
             direction * force_scale, np.array([0, 0, 0]))
@@ -347,12 +349,16 @@ class GenerationClass:
 
     # ================== Save JSON ==================
 
-    def init_dir(self, data_dir):
-        for name in ["initial", "result", "initial_seg", "result_seg"]:
+    def init_dir(self, data_dir, motion=False):
+        if motion:
+            dirs = ["imgs", "segs"]
+        else:
+            dirs = ["initial", "result", "initial_seg", "result_seg"]
+        for name in dirs:
             os.makedirs(os.path.join(data_dir, name), exist_ok=True)
             self.data_dir = data_dir
 
-    def save_json(self, json_data, initial_img, result_img, initial_seg, result_seg):
+    def save_json(self, json_data, initial_img, initial_seg, result_seg=None, result_img=None):
         data_dir = self.data_dir
 
         if type(initial_img) != list:
@@ -367,13 +373,9 @@ class GenerationClass:
         else:
             for i, img in enumerate(initial_img):
                 Image.fromarray(img).save(os.path.join(
-                    data_dir, f"{json_data['initial_imgs'][i]}"))
-                Image.fromarray(result_img[i]).save(os.path.join(
-                    data_dir, f"{json_data['result_imgs'][i]}"))
+                    data_dir, f"{json_data['imgs'][i]}"))
                 sparse.save_npz(os.path.join(
-                    data_dir, f"{json_data['initial_seg'][i]}"), sparse.csr_matrix(initial_seg[i]))
-                sparse.save_npz(os.path.join(
-                    data_dir, f"{json_data['result_seg'][i]}"), sparse.csr_matrix(result_seg[i]))
+                    data_dir, f"{json_data['segs'][i]}"), sparse.csr_matrix(initial_seg[i]))
 
         # save json
         json_path = os.path.join(data_dir, f"data.json")
@@ -381,7 +383,6 @@ class GenerationClass:
             current_data = json.load(open(json_path, "r"))
         except:
             # remove the file if it is empty
-            os.remove(json_path)
             current_data = []
         with open(json_path, "w") as f:
             json.dump(current_data + [json_data], f)
@@ -409,63 +410,60 @@ class GenerationClass:
     def generate_samples(self, N, obj_cfgs, idx, total_idx, type):
         self.initialize_positions(N, obj_cfgs)
 
-        if type in ["move_object"]:
-            rand_obj = np.random.choice(self.objs)
+        if type in ["move_object", "move_object_toward_another"]:
+            [obj.lock_motion(False, False, False, True, True, True)
+             for obj in self.env.objs]
+
+            if type == "move_object":
+                rand_obj = np.random.choice(self.env.objs)
+            elif type == "move_object_toward_another":
+                obj1, obj2 = np.random.choice(self.env.objs, 2, replace=False)
+
             direction = list(self.motion_map.keys())[
                 idx % len(self.motion_map)]
 
-            initial_imgs_paths = []
-            initial_imgs = []
-            initial_segs_paths = []
-            initial_segs = []
-            result_imgs_paths = []
-            result_imgs = []
-            result_segs_paths = []
-            result_segs = []
+            img_paths = []
+            seg_paths = []
+            imgs = []
+            segs = []
 
-            for idx in range(8):  # Simulate for 1 second
-                clear_output(wait=True)
-                self.move_object(rand_obj, direction,
-                                 self.motion_map, 1/(idx+1))
+            for i in range(8):  # Simulate for 1 second
+                if type == "move_object":
+                    self.move_object(rand_obj, direction,
+                                     self.motion_map, 1/(i+1))
+                elif type == "move_object_toward_another":
+                    self.move_object_toward_another(obj1, obj2, 1)
+
                 obs, _, _, _, _ = self.env.step(
                     np.zeros(len(self.env.action_space.sample())))
                 img = obs['image']['base_camera']['rgb']
                 seg, object_ids = self.get_seg_masks(obs)
 
-                if idx < 4:
-                    initial_imgs.append(img)
-                    initial_segs.append(seg)
-                    initial_imgs_paths.append(f"initial/{total_idx}_{idx}.png")
-                    initial_segs_paths.append(
-                        f"initial_seg/{total_idx}_{idx}.npz")
-                else:
-                    result_imgs.append(img)
-                    result_segs.append(seg)
-                    result_imgs_paths.append(f"result/{total_idx}_{idx}.png")
-                    result_segs_paths.append(
-                        f"result_seg/{total_idx}_{idx}.npz")
-
-                total_idx += 1
+                img_paths.append(f"imgs/{total_idx}_{i}.png")
+                imgs.append(img)
+                seg_paths.append(f"segs/{total_idx}_{i}.png")
+                segs.append(seg)
 
             json_data = {
-                "initial_imgs": initial_imgs_paths,
-                "result_imgs": result_imgs_paths,
-                "initial_seg": initial_segs_paths,
-                "result_seg": result_segs_paths,
+                "imgs": img_paths,
+                "segs": seg_paths,
                 "obj_id": object_ids,
                 "direction": direction,
-                "target_object": rand_obj.name,
             }
+            if type == "move_object":
+                json_data["target_object"] = rand_obj.name
+            elif type == "move_object_toward_another":
+                json_data["moving_object"] = obj1.name
+                json_data["target_object"] = obj2.name
 
-            self.save_json(json_data, initial_imgs,
-                           result_imgs, result_imgs, result_segs)
+            self.save_json(json_data, imgs, segs)
 
         else:
 
             obs, _, _, _, _ = self.env.step(
                 np.zeros(len(self.env.action_space.sample())))
             initial_img = obs['image']['base_camera']['rgb']
-            result_seg, object_ids = self.get_seg_masks(obs)
+            initial_seg, object_ids = self.get_seg_masks(obs)
 
             json_data = {
                 "initial_img": f"initial/{total_idx}.png",
@@ -523,8 +521,8 @@ class GenerationClass:
             result_img = obs['image']['base_camera']['rgb']
             result_seg, object_ids = self.get_seg_masks(obs)
 
-            self.save_json(json_data, initial_img,
-                           result_img, result_seg, result_seg)
+            self.save_json(json_data, initial_img, initial_seg,
+                           result_img, result_seg)
 
     # ================== Run Samples ==================
 
@@ -536,9 +534,13 @@ class GenerationClass:
             "place_object_in_between",
             "remove_object",
             "order_by_color",
+            "move_object",
+            move_object_toward_another"
+
         ]
         """
-        self.init_dir(f"../final_data/{N}_{type}")
+        motion = type in ["move_object", "move_object_toward_another"]
+        self.init_dir(f"../final_data/{N}_{type}", motion)
 
         if N == 1:
             random_scales = [6, 10]
@@ -546,11 +548,10 @@ class GenerationClass:
             random_scales = [6, 8]
 
         total_idx = 0
-
         for color in color_maps.keys():
             for idx in range(random_trials):
                 obj_cfgs, camera_cfgs = self.cube_configs(
-                    N, scales=random_scales, add_color=color)
+                    N, scales=random_scales, add_color=color, static=not motion)
                 env = self.get_env(obj_cfgs, camera_cfgs)
 
                 self.generate_samples(

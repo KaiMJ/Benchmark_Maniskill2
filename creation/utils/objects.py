@@ -28,6 +28,12 @@ class GenerationClass:
 
         self.one_obj_directions = ["forward", "backward", "right", "left"]
         self.two_objs_directions = ["front", "behind", "right", "left", "top"]
+        self.motion_map = {
+            "forward": np.array([-250, 0, 0]),
+            "backward": np.array([250, 0, 0]),
+            "right": np.array([0, -250, 0]),
+            "left": np.array([0, 250, 0]),
+        }
 
         if model_paths is None:
             model_paths = sorted(glob(
@@ -152,7 +158,7 @@ class GenerationClass:
             y += np.random.normal(loc=mean_noise, scale=std_dev_noise)
 
             positions.append([x, y, obj_cfgs[i]["scale"] *
-                             self.env.cube_half_size[0] * 2])
+                             self.env.cube_half_size[0]])
 
         for i, obj in enumerate(self.env.unwrapped.objs):
             obj.set_pose(Pose(positions[i], euler2quat(
@@ -346,17 +352,28 @@ class GenerationClass:
             os.makedirs(os.path.join(data_dir, name), exist_ok=True)
             self.data_dir = data_dir
 
-    def save_json(self, json_data, initial_img, result_img, seg_before, seg_after):
+    def save_json(self, json_data, initial_img, result_img, initial_seg, result_seg):
         data_dir = self.data_dir
 
-        Image.fromarray(initial_img).save(os.path.join(
-            data_dir, f"{json_data['initial_img']}"))
-        Image.fromarray(result_img).save(os.path.join(
-            data_dir, f"{json_data['result_img']}"))
-        sparse.save_npz(os.path.join(
-            data_dir, f"{json_data['initial_seg']}"), sparse.csr_matrix(seg_before))
-        sparse.save_npz(os.path.join(
-            data_dir, f"{json_data['result_seg']}"), sparse.csr_matrix(seg_after))
+        if type(initial_img) != list:
+            Image.fromarray(initial_img).save(os.path.join(
+                data_dir, f"{json_data['initial_img']}"))
+            Image.fromarray(result_img).save(os.path.join(
+                data_dir, f"{json_data['result_img']}"))
+            sparse.save_npz(os.path.join(
+                data_dir, f"{json_data['initial_seg']}"), sparse.csr_matrix(initial_seg))
+            sparse.save_npz(os.path.join(
+                data_dir, f"{json_data['result_seg']}"), sparse.csr_matrix(result_seg))
+        else:
+            for i, img in enumerate(initial_img):
+                Image.fromarray(img).save(os.path.join(
+                    data_dir, f"{json_data['initial_imgs'][i]}"))
+                Image.fromarray(result_img[i]).save(os.path.join(
+                    data_dir, f"{json_data['result_imgs'][i]}"))
+                sparse.save_npz(os.path.join(
+                    data_dir, f"{json_data['initial_seg'][i]}"), sparse.csr_matrix(initial_seg[i]))
+                sparse.save_npz(os.path.join(
+                    data_dir, f"{json_data['result_seg'][i]}"), sparse.csr_matrix(result_seg[i]))
 
         # save json
         json_path = os.path.join(data_dir, f"data.json")
@@ -392,70 +409,122 @@ class GenerationClass:
     def generate_samples(self, N, obj_cfgs, idx, total_idx, type):
         self.initialize_positions(N, obj_cfgs)
 
-        obs, _, _, _, _ = self.env.step(
-            np.zeros(len(self.env.action_space.sample())))
-        initial_img = obs['image']['base_camera']['rgb']
-        seg_before, object_ids = self.get_seg_masks(obs)
+        if type in ["move_object"]:
+            rand_obj = np.random.choice(self.objs)
+            direction = list(self.motion_map.keys())[
+                idx % len(self.motion_map)]
 
-        json_data = {
-            "initial_img": f"initial/{total_idx}.png",
-            "result_img": f"result/{total_idx}.png",
-            "initial_seg": f"initial_seg/{total_idx}.npz",
-            "result_seg": f"result_seg/{total_idx}.npz",
-            "obj_id": object_ids,
-        }
+            initial_imgs_paths = []
+            initial_imgs = []
+            initial_segs_paths = []
+            initial_segs = []
+            result_imgs_paths = []
+            result_imgs = []
+            result_segs_paths = []
+            result_segs = []
 
-        if type == "place_object_in_direction":
-            directions = self.one_obj_directions
-            rand_idx = np.random.choice(len(self.env.objs))
-            obj = self.env.objs[rand_idx]
-            direction = directions[idx % len(directions)]
+            for idx in range(8):  # Simulate for 1 second
+                clear_output(wait=True)
+                self.move_object(rand_obj, direction,
+                                 self.motion_map, 1/(idx+1))
+                obs, _, _, _, _ = self.env.step(
+                    np.zeros(len(self.env.action_space.sample())))
+                img = obs['image']['base_camera']['rgb']
+                seg, object_ids = self.get_seg_masks(obs)
 
-            self.place_object_in_direction(obj, direction)
-            json_data["target_object"] = obj.name
+                if idx < 4:
+                    initial_imgs.append(img)
+                    initial_segs.append(seg)
+                    initial_imgs_paths.append(f"initial/{total_idx}_{idx}.png")
+                    initial_segs_paths.append(
+                        f"initial_seg/{total_idx}_{idx}.npz")
+                else:
+                    result_imgs.append(img)
+                    result_segs.append(seg)
+                    result_imgs_paths.append(f"result/{total_idx}_{idx}.png")
+                    result_segs_paths.append(
+                        f"result_seg/{total_idx}_{idx}.npz")
 
-        elif type == "place_object_in_between":
-            direction = "between"
-            rand_objs = np.random.choice(
-                self.env.unwrapped.objs, 3, replace=False)
-            obj1, obj2, obj3 = rand_objs
+                total_idx += 1
 
-            self.place_object_in_between(obj1, obj2, obj3)
-            json_data["between_objects"] = [obj2.name, obj3.name]
-            json_data["target_object"] = obj1.name
+            json_data = {
+                "initial_imgs": initial_imgs_paths,
+                "result_imgs": result_imgs_paths,
+                "initial_seg": initial_segs_paths,
+                "result_seg": result_segs_paths,
+                "obj_id": object_ids,
+                "direction": direction,
+                "target_object": rand_obj.name,
+            }
 
-        elif type == "place_object_on_another":
-            directions = self.two_objs_directions
-            rand_objs = np.random.choice(
-                self.env.unwrapped.objs, 2, replace=False)
-            obj1, obj2 = rand_objs
-            direction = directions[idx % len(directions)]
-            self.place_object_on_another(obj1, obj2, direction)
-            json_data["target_object"] = obj1.name
+            self.save_json(json_data, initial_imgs,
+                           result_imgs, result_imgs, result_segs)
 
-        elif type == "remove_object":
-            rand_idx = np.random.choice(len(self.env.objs))
-            obj = self.env.objs[rand_idx]
-            self.remove_object(obj)
-            json_data["target_object"] = obj.name
+        else:
 
-        elif type == "order_by_color":
-            colors = [obj_cfg["color_name"] for obj_cfg in obj_cfgs]
-            order_list = np.random.permutation(colors).tolist()
-            self.order_by_color(order_list, colors)
-            json_data["color_order"] = order_list
+            obs, _, _, _, _ = self.env.step(
+                np.zeros(len(self.env.action_space.sample())))
+            initial_img = obs['image']['base_camera']['rgb']
+            result_seg, object_ids = self.get_seg_masks(obs)
 
+            json_data = {
+                "initial_img": f"initial/{total_idx}.png",
+                "result_img": f"result/{total_idx}.png",
+                "initial_seg": f"initial_seg/{total_idx}.npz",
+                "result_seg": f"result_seg/{total_idx}.npz",
+                "obj_id": object_ids,
+            }
 
-        if type not in ["remove_object", "order_by_color"]:
-            json_data["direction"] = direction
+            if type == "place_object_in_direction":
+                directions = self.one_obj_directions
+                rand_idx = np.random.choice(len(self.env.objs))
+                obj = self.env.objs[rand_idx]
+                direction = directions[idx % len(directions)]
 
-        obs, _, _, _, _ = self.env.step(
-            np.zeros(len(self.env.action_space.sample())))
-        result_img = obs['image']['base_camera']['rgb']
-        seg_after, object_ids = self.get_seg_masks(obs)
+                self.place_object_in_direction(obj, direction)
+                json_data["target_object"] = obj.name
 
-        self.save_json(json_data, initial_img,
-                       result_img, seg_before, seg_after)
+            elif type == "place_object_in_between":
+                direction = "between"
+                rand_objs = np.random.choice(
+                    self.env.unwrapped.objs, 3, replace=False)
+                obj1, obj2, obj3 = rand_objs
+
+                self.place_object_in_between(obj1, obj2, obj3)
+                json_data["between_objects"] = [obj2.name, obj3.name]
+                json_data["target_object"] = obj1.name
+
+            elif type == "place_object_on_another":
+                directions = self.two_objs_directions
+                rand_objs = np.random.choice(
+                    self.env.unwrapped.objs, 2, replace=False)
+                obj1, obj2 = rand_objs
+                direction = directions[idx % len(directions)]
+                self.place_object_on_another(obj1, obj2, direction)
+                json_data["target_object"] = obj1.name
+
+            elif type == "remove_object":
+                rand_idx = np.random.choice(len(self.env.objs))
+                obj = self.env.objs[rand_idx]
+                self.remove_object(obj)
+                json_data["target_object"] = obj.name
+
+            elif type == "order_by_color":
+                colors = [obj_cfg["color_name"] for obj_cfg in obj_cfgs]
+                order_list = np.random.permutation(colors).tolist()
+                self.order_by_color(order_list, colors)
+                json_data["color_order"] = order_list
+
+            if type not in ["remove_object", "order_by_color"]:
+                json_data["direction"] = direction
+
+            obs, _, _, _, _ = self.env.step(
+                np.zeros(len(self.env.action_space.sample())))
+            result_img = obs['image']['base_camera']['rgb']
+            result_seg, object_ids = self.get_seg_masks(obs)
+
+            self.save_json(json_data, initial_img,
+                           result_img, result_seg, result_seg)
 
     # ================== Run Samples ==================
 
@@ -470,7 +539,6 @@ class GenerationClass:
         ]
         """
         self.init_dir(f"../final_data/{N}_{type}")
-
 
         if N == 1:
             random_scales = [6, 10]

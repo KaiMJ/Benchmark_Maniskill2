@@ -130,3 +130,58 @@ ycb_heights = {
     "073-g_lego_duplo": 0.03246751427650452,
     "077_rubiks_cube": 0.03088015504181385
 }
+
+
+
+# code to get model_heights
+
+# model_heights = {model: None for model in models}
+
+# n = 1
+# for model in models:
+#     object_cfgs, camera_cfgs = gen.model_configs(n, [model])
+#     env = gen.get_env(object_cfgs, camera_cfgs)
+#     gen.initialize_positions(n, object_cfgs)
+
+#     for i in range(10):
+#         obs, _, _, _, _ = env.step(np.zeros(len(env.action_space.sample())))
+#         clear_output(wait=True)
+#         img = obs['image']["base_camera"]["rgb"]
+#         plt.title([o["name"] for o in object_cfgs])
+#         plt.imshow(img)
+#         plt.show()
+
+#     current_height = env.obj.get_pose().p[-1]
+#     model_heights[object_cfgs[0]["name"]] = current_height
+
+model_heights = {
+    'basket': 0.2101399,
+    'bean_bag': 0.2450695,
+    'bicycle': 0.20602576,
+    'blender': 0.26533362,
+    'chair': 0.25081852,
+    'chandelier': 0.24378444,
+    'cup': 0.21016064,
+    'dog': 0.2467341,
+    'donut': 0.23817456,
+    'ducky': 0.22752494,
+    'eiffel_tower': 0.24299057,
+    'fountain': 0.1768845,
+    'grand_piano': 0.27025518,
+    'hourglass': 0.24347751,
+    'imgs': -0.83115274,
+    'kite': 0.26165235,
+    'mirror': 0.26193962,
+    'photo_frame': 0.20267123,
+    'pot': 0.22206035,
+    'sofa': 0.10267718,
+    'sunlamp': 0.25989693,
+    'swan': 0.24650599,
+    'teddy bear': 0.27208704,
+    'telephone': 0.23096374,
+    'treadmill': 0.20237137,
+    'typewriter': 0.24304533,
+    'watermelon': 0.26084968,
+    'wok': 0.14206947,
+    'zebra': 0.2649879
+}

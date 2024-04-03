@@ -7,7 +7,7 @@ import gymnasium as gym
 from sapien.core import Pose
 import numpy as np
 from transforms3d.euler import euler2quat, quat2euler
-from utils.config import ycb_heights, color_maps
+from utils.config import model_heights, ycb_heights, color_maps
 from glob import glob
 from scipy import sparse
 from PIL import Image
@@ -75,7 +75,7 @@ class GenerationClass:
             else:
                 builder = self._scene.create_actor_builder()
                 filepath = f"../models/{name}/mesh.obj"
-                scale *= self.cube_half_size / 0.01887479572529618
+                scale *= self.cube_half_size / 0.01887479572529618 / 3
                 builder.add_multiple_collisions_from_file(
                     filename=filepath, scale=scale, density=1000
                 )
@@ -152,12 +152,21 @@ class GenerationClass:
             x += np.random.normal(loc=mean_noise, scale=std_dev_noise)
             y += np.random.normal(loc=mean_noise, scale=std_dev_noise)
 
-            positions.append([x, y, obj_cfgs[i]["scale"] *
-                             self.env.cube_half_size[0]])
+            if "cube" in obj_cfgs[i]["name"]:
+                height = obj_cfgs[i]["scale"] * self.env.cube_half_size[0]
+            else:
+                # height = self.env.objs[i].get_pose().p[-1]# + self.env.cube_half_size[0]
+                height = model_heights[obj_cfgs[i]["name"]]
+
+            positions.append([x, y, height])
+
 
         for i, obj in enumerate(self.env.unwrapped.objs):
-            obj.set_pose(Pose(positions[i], euler2quat(
-                0, 0, np.random.uniform(-np.pi*2, np.pi*2))))
+            if "cube" in obj_cfgs[i]["name"]:
+                quat = euler2quat(0, 0, np.random.uniform(-np.pi*2, np.pi*2))
+            else:
+                quat = euler2quat(np.pi/2, 0, np.random.uniform(np.pi*3/4, np.pi*5/4))
+            obj.set_pose(Pose(positions[i], quat))
 
         return positions
 
@@ -263,10 +272,10 @@ class GenerationClass:
         result = np.concatenate([final_vector, [0]])
         return result
 
-    def move_object(self, obj, direction, motion_map, force_scale=10):
+    def move_object(self, obj, direction, force_scale):
         force_scale *= obj.mass
         obj.add_force_at_point(
-            motion_map[direction]*force_scale, np.array([0, 0, 0]))
+            self.motion_map[direction]*force_scale, np.array([0, 0, 0]))
 
     def get_object_to_object_direction(self, obj_to_move, obj_target):
         pose_obj = obj_to_move.get_pose()
@@ -340,6 +349,26 @@ class GenerationClass:
         camera_cfgs = {"p": [-1, 0, 1], "fov": 1.2}
 
         return configs, camera_cfgs
+
+    def model_data(self, model):
+        return {
+            "name": model,
+            "scale": 1,
+            "static": False,
+        }
+
+    def model_configs(self, n, selected_models=None):
+        """
+        n: number of models
+        selected_models: list of models
+        """
+        if selected_models is None:
+            selected_models = self.model_paths
+
+        object_cfgs = [self.model_data(m) for m in np.random.choice(selected_models, n, replace=False)]
+        camera_cfgs = {"p": [-1, 0, 1], "fov": 1.2}
+
+        return object_cfgs, camera_cfgs
 
     # ================== Save JSON ==================
 
@@ -423,8 +452,7 @@ class GenerationClass:
 
             for i in range(8):  # Simulate for 1 second
                 if type == "move_object":
-                    self.move_object(rand_obj, direction,
-                                     self.motion_map, 1/(i+1))
+                    self.move_object(rand_obj, direction, 1/(i+1))
                 elif type == "move_object_toward_another":
                     self.move_object_toward_another(obj1, obj2, 1)
 

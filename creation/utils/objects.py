@@ -42,12 +42,11 @@ class GenerationClass:
 
     # ================== Initializing environment ==================
 
-    def get_env(self, configs, camera_cfgs=None):
-        self.configs = configs
+    def get_env(self, object_cfgs, camera_cfgs=None):
         if camera_cfgs is not None:
             self.camera_cfgs = camera_cfgs
 
-        self.register_objects(self.camera_cfgs)
+        self.register_objects(object_cfgs, self.camera_cfgs)
         self.env = gym.make("CustomEnv-v0", obs_mode="rgbd",
                             camera_cfgs={"add_segmentation": True})
         self.env.reset()
@@ -55,7 +54,7 @@ class GenerationClass:
             Pose([0, 0, -2], [1, 0, 0, 0]))
         return self.env
 
-    def register_objects(self, camera_cfgs):
+    def register_objects(self, object_cfgs, camera_cfgs):
         """
             Configs: dict[
                 "name": "cube" / "sphere" / "002_master_chef_can"
@@ -66,40 +65,36 @@ class GenerationClass:
 
         def build_asset(self, config):
             scale = config["scale"]
-            if config["name"].split('_')[-1] == "cube":
+            name = config["name"]
+
+            if name.split('_')[-1] == "cube":
                 obj = self._build_cube(
                     self.cube_half_size*scale, color=config["color"], static=config["static"])
-                obj.name = config["name"]
-            else:
-                scale *= self.cube_half_size / 0.01887479572529618
-                filepath = config["name"]
-                model_dir = Path(filepath).resolve()
-                # model_dir = ".." / ASSET_DIR / "mani_skill2_ycb/models/011_banana"
-                builder = self._scene.create_actor_builder()
+                obj.name = name
 
-                collision_file = str(model_dir / "collision.obj")
+            else:
+                builder = self._scene.create_actor_builder()
+                filepath = f"../models/{name}/mesh.obj"
+                scale *= self.cube_half_size / 0.01887479572529618
                 builder.add_multiple_collisions_from_file(
-                    filename=collision_file, scale=scale, density=1000
+                    filename=filepath, scale=scale, density=1000
                 )
-                visual_file = str(model_dir / "textured.obj")
-                builder.add_visual_from_file(filename=visual_file, scale=scale)
-                # builder.add_box_visual()
+                builder.add_visual_from_file(filename=filepath, scale=scale)
+
                 if config["static"]:
-                    obj = builder.build_static(name=filepath.split("/")[-1])
+                    obj = builder.build_static(name=name)
                 else:
-                    obj = builder.build(name=filepath.split("/")[-1])
+                    obj = builder.build(name=name)
                     obj.lock_motion(False, False, False, True, True, True)
 
             return obj
-
-        configs = self.configs
 
         @register_env("CustomEnv-v0", max_episode_steps=200, override=True)
         class CustomEnv(PickCubeEnv):
             def _load_actors(self):
                 self._add_ground(render=self.bg_name is None)
                 objs = []
-                for i, config in enumerate(configs):
+                for i, config in enumerate(object_cfgs):
                     obj = build_asset(self, config)
                     if i == 0:
                         self.obj = obj
@@ -187,7 +182,6 @@ class GenerationClass:
 
     def place_object_on_another(self, obj1, obj2, direction, distance=0.4):
         pose_obj2 = obj2.get_pose()
-        pose_obj1 = obj1.get_pose()
 
         if direction == "front":
             new_position_obj1 = [pose_obj2.p[0] -

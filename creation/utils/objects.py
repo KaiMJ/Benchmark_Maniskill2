@@ -39,6 +39,10 @@ class GenerationClass:
             model_paths = sorted(glob(
                 "../data/mani_skill2_ycb/models/*"), key=lambda x: int(x.split('/')[-1][:3]))
         self.model_paths = model_paths
+        self.models = sorted(os.listdir("../models"))
+
+        # adjust brightness of imported models
+        self.brightness = 40
 
     # ================== Initializing environment ==================
 
@@ -156,16 +160,20 @@ class GenerationClass:
                 height = obj_cfgs[i]["scale"] * self.env.cube_half_size[0]
             else:
                 # height = self.env.objs[i].get_pose().p[-1]# + self.env.cube_half_size[0]
-                height = model_heights[obj_cfgs[i]["name"]]
+
+                try:
+                    height = model_heights[obj_cfgs[i]["name"]]
+                except:
+                    height = 0.25
 
             positions.append([x, y, height])
-
 
         for i, obj in enumerate(self.env.unwrapped.objs):
             if "cube" in obj_cfgs[i]["name"]:
                 quat = euler2quat(0, 0, np.random.uniform(-np.pi*2, np.pi*2))
             else:
-                quat = euler2quat(np.pi/2, 0, np.random.uniform(np.pi*3/4, np.pi*5/4))
+                quat = euler2quat(
+                    np.pi/2, 0, np.random.uniform(np.pi*3/4, np.pi*5/4))
             obj.set_pose(Pose(positions[i], quat))
 
         return positions
@@ -350,14 +358,14 @@ class GenerationClass:
 
         return configs, camera_cfgs
 
-    def model_data(self, model):
+    def model_data(self, model, static):
         return {
             "name": model,
             "scale": 1,
-            "static": False,
+            "static": static,
         }
 
-    def model_configs(self, n, selected_models=None):
+    def model_configs(self, n, selected_models=None, static=False):
         """
         n: number of models
         selected_models: list of models
@@ -365,7 +373,8 @@ class GenerationClass:
         if selected_models is None:
             selected_models = self.model_paths
 
-        object_cfgs = [self.model_data(m) for m in np.random.choice(selected_models, n, replace=False)]
+        object_cfgs = [self.model_data(m, static) for m in np.random.choice(
+            selected_models, n, replace=False)]
         camera_cfgs = {"p": [-1, 0, 1], "fov": 1.2}
 
         return object_cfgs, camera_cfgs
@@ -381,7 +390,7 @@ class GenerationClass:
             os.makedirs(os.path.join(data_dir, name), exist_ok=True)
             self.data_dir = data_dir
 
-    def save_json(self, json_data, initial_img, initial_seg, result_seg=None, result_img=None):
+    def save_json(self, json_data, initial_img, initial_seg, result_img=None, result_seg=None):
         data_dir = self.data_dir
 
         if type(initial_img) != list:
@@ -410,7 +419,17 @@ class GenerationClass:
         with open(json_path, "w") as f:
             json.dump(current_data + [json_data], f)
 
-    # ================== Get Segmentation Masks ==================
+    # ================== Get Image and Segmentation Masks ==================
+    def get_image(self, obs, object):
+        img = obs['image']["base_camera"]["rgb"]
+        if object == "object":
+            mask = obs['image']['base_camera']['Segmentation'][..., :3].copy()
+            mask[mask != self.env.obj.id-2] = 0
+            mask = np.amax(mask.astype(bool), axis=2)
+
+            img[mask] += self.brightness
+            img = np.clip(img, 0, 255)
+        return img
 
     def get_seg_masks(self, obs):
         seg = obs['image']['base_camera']['Segmentation'][..., :3]
@@ -430,7 +449,15 @@ class GenerationClass:
 
     # ================== Generate and Save Samples ==================
 
-    def generate_samples(self, N, obj_cfgs, idx, total_idx, type):
+    def generate_samples(self, N, obj_cfgs, idx, total_idx, type, object):
+        """
+        N: n objects to generate
+        obj_cfgs: object configurations
+        idx: index of the trial
+        total_idx: index of the total samples for saving files
+        type: type of action
+        object: "cube" or "object"
+        """
         self.initialize_positions(N, obj_cfgs)
 
         if type in ["move_object", "move_object_toward_another"]:
@@ -458,7 +485,7 @@ class GenerationClass:
 
                 obs, _, _, _, _ = self.env.step(
                     np.zeros(len(self.env.action_space.sample())))
-                img = obs['image']['base_camera']['rgb']
+                img = self.get_image(obs, object)
                 seg, object_ids = self.get_seg_masks(obs)
 
                 img_paths.append(f"imgs/{total_idx}_{i}.png")
@@ -484,7 +511,7 @@ class GenerationClass:
 
             obs, _, _, _, _ = self.env.step(
                 np.zeros(len(self.env.action_space.sample())))
-            initial_img = obs['image']['base_camera']['rgb']
+            initial_img = self.get_image(obs, object)
             initial_seg, object_ids = self.get_seg_masks(obs)
 
             json_data = {
@@ -540,7 +567,7 @@ class GenerationClass:
 
             obs, _, _, _, _ = self.env.step(
                 np.zeros(len(self.env.action_space.sample())))
-            result_img = obs['image']['base_camera']['rgb']
+            result_img = self.get_image(obs, object)
             result_seg, object_ids = self.get_seg_masks(obs)
 
             self.save_json(json_data, initial_img, initial_seg,
@@ -548,7 +575,7 @@ class GenerationClass:
 
     # ================== Run Samples ==================
 
-    def generate(self, N, type, random_trials=1):
+    def generate(self, N, type, random_trials=1, object="cube"):
         """
         type: [
             "place_object_in_direction",
@@ -558,11 +585,12 @@ class GenerationClass:
             "order_by_color",
             "move_object",
             move_object_toward_another"
-
         ]
+        object: "cube" or "object" or "mix"
         """
+
         motion = type in ["move_object", "move_object_toward_another"]
-        self.init_dir(f"../final_data/{N}_{type}", motion)
+        self.init_dir(f"../final_data/{object}/{N}_{type}", motion)
 
         if N == 1:
             random_scales = [6, 10]
@@ -570,14 +598,33 @@ class GenerationClass:
             random_scales = [6, 8]
 
         total_idx = 0
-        for color in color_maps.keys():
-            for idx in range(random_trials):
-                obj_cfgs, camera_cfgs = self.cube_configs(
-                    N, scales=random_scales, add_color=color, static=not motion)
-                env = self.get_env(obj_cfgs, camera_cfgs)
 
-                self.generate_samples(
-                    N, obj_cfgs, idx, total_idx, type=type)
-                total_idx += 1
-                clear_output(wait=True)
-                print("Done", total_idx, end="\r")
+        if object == "cube":
+            for color in color_maps.keys():
+                for idx in range(random_trials):
+                    obj_cfgs, camera_cfgs = self.cube_configs(
+                        N, scales=random_scales, add_color=color, static=not motion)
+                    env = self.get_env(obj_cfgs, camera_cfgs)
+                    self.generate_samples(
+                        N, obj_cfgs, idx, total_idx, type, object)
+
+                    total_idx += 1
+                    clear_output(wait=True)
+                    print("Done", total_idx, end="\r")
+
+        elif object == "object":
+            for model in model_heights.keys():
+                for idx in range(random_trials):
+                    other_models = [m for m in self.models if m != model]
+                    other_model = np.random.choice(
+                        other_models, N-1, replace=False)
+                    other_model = [model] + list(other_model)
+                    obj_cfgs, camera_cfgs = self.model_configs(N, other_model)
+                    env = self.get_env(obj_cfgs, camera_cfgs)
+
+                    self.generate_samples(
+                        N, obj_cfgs, idx, total_idx, type, object)
+
+                    total_idx += 1
+                    clear_output(wait=True)
+                    print("Done", total_idx, end="\r")

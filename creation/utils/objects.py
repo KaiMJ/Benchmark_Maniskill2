@@ -42,7 +42,7 @@ class GenerationClass:
         self.models = sorted(os.listdir("../models"))
 
         # adjust brightness of imported models
-        self.brightness = 40
+        self.brightness = 30
 
     # ================== Initializing environment ==================
 

@@ -1,6 +1,6 @@
 from diffusers import DiffusionPipeline
 import torch
-from utils.convert_color import convert
+from tabletop_manipulation.Custom_3D.convert_color import convert
 from utils.run import process_images
 from IPython.display import display  
 import matplotlib.pyplot as plt

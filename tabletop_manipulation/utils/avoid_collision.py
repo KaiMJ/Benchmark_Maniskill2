@@ -174,13 +174,11 @@ class AvoidCollision():
 
             open_set.remove(current)
             for neighbor in get_neighbors(current):
-                tentative_g_score = g_score[current] + \
-                    1  # Assuming each step has cost 1
+                tentative_g_score = g_score[current] + 1  # Assuming each step has cost 1
                 if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
                     came_from[neighbor] = current
                     g_score[neighbor] = tentative_g_score
-                    f_score[neighbor] = tentative_g_score + \
-                        heuristic(neighbor, goal)
+                    f_score[neighbor] = tentative_g_score + heuristic(neighbor, goal)
                     if neighbor not in open_set:
                         open_set.add(neighbor)
 

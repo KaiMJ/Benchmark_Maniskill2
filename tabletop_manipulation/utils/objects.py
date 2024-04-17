@@ -15,6 +15,15 @@ import json
 import os
 from IPython.display import clear_output
 
+"""
+GenerationClass split into 4 distinct categories:
+
+    1. Initalization of class and objects,
+    2. Placing objects in direction / motion,
+    3. Configuration of environment and models,
+    4. Saving JSON and generating samples.
+
+"""
 
 class GenerationClass:
     def __init__(self, model_paths=None):
@@ -39,7 +48,6 @@ class GenerationClass:
             model_paths = sorted(glob(
                 "../data/mani_skill2_ycb/models/*"), key=lambda x: int(x.split('/')[-1][:3]))
         self.model_paths = model_paths
-        self.models = sorted(os.listdir("../models"))
 
         # adjust brightness of imported models
         self.brightness = 30
@@ -615,7 +623,7 @@ class GenerationClass:
         elif object == "object":
             for model in model_heights.keys():
                 for idx in range(random_trials):
-                    other_models = [m for m in self.models if m != model]
+                    other_models = [m for m in self.model_paths if m != model]
                     other_model = np.random.choice(
                         other_models, N-1, replace=False)
                     other_model = [model] + list(other_model)
